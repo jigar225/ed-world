@@ -3,14 +3,18 @@
 // encrypted_world_id so a world is generated ONCE and reused forever
 // (this is our big cost saver: no regeneration per student).
 
+import type { LingbotScene } from "@/lib/lingbot";
+
 export interface Mission {
   title: string;
   description: string;
   hint: string;
+  event_key?: string;
 }
 
 export interface LessonPlan {
   topic: string;
+  engine?: "happy-oyster";
   title: string;
   summary: string;
   world_prompt: string;
@@ -18,9 +22,27 @@ export interface LessonPlan {
   missions: Mission[];
 }
 
+export interface LingbotLessonPlan {
+  topic: string;
+  engine: "lingbot";
+  title: string;
+  summary: string;
+  scene: LingbotScene;
+  idle_prompt: string;
+  seed_image_prompt: string;
+  missions: Mission[];
+}
+
+export type AnyPlan = LessonPlan | LingbotLessonPlan;
+
+export function isLingbotPlan(plan: AnyPlan): plan is LingbotLessonPlan {
+  return (plan as LingbotLessonPlan).engine === "lingbot";
+}
+
 export interface SavedWorld {
-  id: string; // encrypted_world_id from HappyOyster
-  plan: LessonPlan;
+  id: string; // encrypted_world_id (happy-oyster) or lingbot scene key
+  engine?: "happy-oyster" | "lingbot";
+  plan: AnyPlan;
   createdAt: number;
 }
 

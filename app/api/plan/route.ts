@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { composeIdlePrompt, deriveSeedImagePrompt, LingbotScene } from "@/lib/lingbot";
 
 // Turns a student's topic ("I want to understand gravity") into:
 //  1. an optimized HappyOyster world prompt (follows the official prompt guide)
@@ -48,10 +49,41 @@ HARD RULES:
 - Reference ONLY things that exist in the world_prompt.
 - Each mission teaches one idea; together they teach the whole topic.`;
 
+const LINGBOT_SYSTEM_PROMPT = `You are the scene architect for an educational app where students explore AI-generated interactive 3D worlds. You write LAYERED scenes for the LingBot World 2 world model.
+
+Given a student's topic, output ONLY valid JSON (no markdown) with this exact shape:
+
+{
+  "title": "short lesson title, max 6 words",
+  "summary": "2-3 friendly sentences about what the student will learn",
+  "base": "max 550 chars",
+  "camera_static": "max 280 chars",
+  "camera_dynamic": "max 280 chars",
+  "movement_static": "max 330 chars",
+  "movement_dynamic": "max 330 chars",
+  "jump": "one sentence, symmetric arc: launch, airborne, landing",
+  "crouch": "one sentence, camera lowers as viewpoint crouches",
+  "events": [ { "key": "1", "name": "2-4 word label", "detail": "max 450 chars" } ],
+  "seed_image_prompt": "max 550 chars",
+  "missions": [ { "title": "short", "description": "1-2 sentences", "hint": "1 sentence", "event_key": "1" } ]
+}
+
+== HARD RULES (violating these produces broken worlds) ==
+1. LAYERS OWN AXES. base = WHAT the world is (subject, environment, style). camera = how it is framed. movement = what the viewpoint does. events = what just happened. Never leak one layer's axis into another (no motion verbs in base, no camera verbs in events).
+2. FIRST-PERSON scenes around a named foreground ANCHOR (the educational centerpiece, e.g. "the colossal rotating DNA double helix"). camera.static: anchor centered, only arrow-key look-input orbits it, nothing moves on its own. camera.dynamic: "Strict first-person view, the [anchor] holding steady at the centre of the frame as the viewpoint advances through the scene; look-input becomes the heading changing."
+3. PIN 2-4 landmark objects in base with blunt counts: "The world contains EXACTLY ONE ... at a fixed position AND EXACTLY ONE ...". Landmarks = the educational objects (nucleus, mitochondria, replication fork...). Texture (mist, dust) stays unpinned.
+4. NEVER negations ("no people", "empty", "nothing"). Describe what IS present.
+5. movement.static = idle with 2-3 SPECIFIC micro-motions (drifting motes, pulsing membrane, slow rotation). Never "everything is static".
+6. movement.dynamic = travel: ground/space contact, environment responding to motion.
+7. EVENTS are hold-key clauses = THE EDUCATIONAL INTERACTIONS (3-5 of them): "the double helix unzips down the middle as two new strands assemble", "a hammer and a feather drop side by side, falling at the same slow rate". Definite references only ("the helix", then "it"), never re-describe the subject. Each event must END SETTLED (returns to a stable state). Each must make sense next to any other event. Stage them along the view axis, frameable.
+8. seed_image_prompt: derived FROM the layers — every base noun + pinned landmarks in stated positions + atmosphere; recast camera.static framing as a still ("A first-person still frame of ..."); recast movement.static pose as plain description; 16:9 wide; no humans, no text, no watermark; end with "photorealistic, high detail, cinematic color grading".
+9. missions: 4-6, ordered simple→deep, each tied to an event_key the student must hold or a landmark to find.`;
+
 interface Mission {
   title: string;
   description: string;
   hint: string;
+  event_key?: string;
 }
 
 interface LessonPlan {
@@ -62,7 +94,22 @@ interface LessonPlan {
   missions: Mission[];
 }
 
-function extractJson(text: string): LessonPlan {
+interface LingbotPlan {
+  title: string;
+  summary: string;
+  base: string;
+  camera_static: string;
+  camera_dynamic: string;
+  movement_static: string;
+  movement_dynamic: string;
+  jump: string;
+  crouch: string;
+  events: { key: string; name: string; detail: string }[];
+  seed_image_prompt: string;
+  missions: Mission[];
+}
+
+function extractJson<T>(text: string): T {
   const cleaned = text
     .replace(/```json\s*/gi, "")
     .replace(/```\s*/g, "")
@@ -70,7 +117,7 @@ function extractJson(text: string): LessonPlan {
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
   if (start === -1 || end === -1) throw new Error("No JSON object in model output");
-  return JSON.parse(cleaned.slice(start, end + 1)) as LessonPlan;
+  return JSON.parse(cleaned.slice(start, end + 1)) as T;
 }
 
 export async function POST(req: Request) {
@@ -98,9 +145,11 @@ export async function POST(req: Request) {
   }
 
   let topic: string;
+  let engine: string;
   try {
     const body = await req.json();
     topic = String(body?.topic ?? "").trim();
+    engine = String(body?.engine ?? "happy-oyster").trim();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
@@ -109,7 +158,7 @@ export async function POST(req: Request) {
   }
 
   const t0 = Date.now();
-  console.log(`[plan] start — topic="${topic}" model=${model} @ ${baseUrl}`);
+  console.log(`[plan] start — topic="${topic}" engine=${engine} model=${model} @ ${baseUrl}`);
 
   const r = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
@@ -119,7 +168,10 @@ export async function POST(req: Request) {
       temperature: 0.7,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: SYSTEM_PROMPT },
+        {
+          role: "system",
+          content: engine === "lingbot" ? LINGBOT_SYSTEM_PROMPT : SYSTEM_PROMPT,
+        },
         { role: "user", content: `Student topic: "${topic}"` },
       ],
     }),
@@ -139,7 +191,39 @@ export async function POST(req: Request) {
   const content: string = data?.choices?.[0]?.message?.content ?? "";
 
   try {
-    const plan = extractJson(content);
+    if (engine === "lingbot") {
+      const plan = extractJson<LingbotPlan>(content);
+      if (!plan.base || !plan.camera_static || !Array.isArray(plan.events)) {
+        throw new Error("Missing LingBot scene layers");
+      }
+      const scene: LingbotScene = {
+        base: plan.base,
+        camera_static: plan.camera_static,
+        camera_dynamic: plan.camera_dynamic,
+        movement_static: plan.movement_static,
+        movement_dynamic: plan.movement_dynamic,
+        jump: plan.jump,
+        crouch: plan.crouch,
+        events: plan.events,
+        seed_image_prompt: plan.seed_image_prompt,
+      };
+      const idle_prompt = composeIdlePrompt(scene);
+      console.log(
+        `[plan] ✓ lingbot scene in ${Date.now() - t0}ms — "${plan.title}", ${plan.events.length} events, idle prompt ${idle_prompt.length} chars`
+      );
+      return NextResponse.json({
+        topic,
+        engine,
+        title: plan.title,
+        summary: plan.summary,
+        scene,
+        idle_prompt,
+        seed_image_prompt: deriveSeedImagePrompt(scene),
+        missions: plan.missions,
+      });
+    }
+
+    const plan = extractJson<LessonPlan>(content);
     if (!plan.world_prompt || !Array.isArray(plan.missions)) {
       throw new Error("Missing world_prompt or missions");
     }
@@ -148,7 +232,7 @@ export async function POST(req: Request) {
     console.log(
       `[plan] ✓ done in ${Date.now() - t0}ms — "${plan.title}", ${plan.missions.length} missions`
     );
-    return NextResponse.json({ topic, ...plan });
+    return NextResponse.json({ topic, engine, ...plan });
   } catch (e) {
     console.warn(`[plan] ✗ parse failed in ${Date.now() - t0}ms:`, e);
     return NextResponse.json(

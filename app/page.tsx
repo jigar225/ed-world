@@ -4,21 +4,26 @@ import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import dynamic from "next/dynamic";
 import WorldExperience from "@/components/WorldExperience";
+import LingbotExperience from "@/components/LingbotExperience";
 import LoadingUniverse from "@/components/LoadingUniverse";
 import {
+  AnyPlan,
   LessonPlan,
   SavedWorld,
+  isLingbotPlan,
   listWorlds,
   removeWorld,
 } from "@/lib/worlds";
 
 const Scene = dynamic(() => import("@/components/Scene"), { ssr: false });
 
+type Engine = "happy-oyster" | "lingbot";
+
 type Stage =
   | { name: "home" }
   | { name: "planning" }
-  | { name: "planned"; plan: LessonPlan }
-  | { name: "world"; plan: LessonPlan; jwt: string; worldId?: string };
+  | { name: "planned"; plan: AnyPlan }
+  | { name: "world"; plan: AnyPlan; jwt: string; worldId?: string };
 
 const EXAMPLES = ["Gravity on the Moon", "DNA replication", "The water cycle", "Photosynthesis"];
 
@@ -39,6 +44,7 @@ const fadeUp = {
 export default function Home() {
   const [stage, setStage] = useState<Stage>({ name: "home" });
   const [topic, setTopic] = useState("");
+  const [engine, setEngine] = useState<Engine>("happy-oyster");
   const [error, setError] = useState<string | null>(null);
   const [worlds, setWorlds] = useState<SavedWorld[]>([]);
 
@@ -46,25 +52,25 @@ export default function Home() {
     setWorlds(listWorlds());
   }, [stage.name]);
 
-  async function planLesson(chosenTopic: string) {
+  async function planLesson(chosenTopic: string, chosenEngine: Engine = engine) {
     setError(null);
     setStage({ name: "planning" });
     try {
       const r = await fetch("/api/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic: chosenTopic }),
+        body: JSON.stringify({ topic: chosenTopic, engine: chosenEngine }),
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error ?? "Failed to plan lesson");
-      setStage({ name: "planned", plan: data as LessonPlan });
+      setStage({ name: "planned", plan: data as AnyPlan });
     } catch (e) {
       setError(String(e instanceof Error ? e.message : e));
       setStage({ name: "home" });
     }
   }
 
-  async function enterWorld(plan: LessonPlan, worldId?: string) {
+  async function enterWorld(plan: AnyPlan, worldId?: string) {
     setError(null);
     try {
       const r = await fetch("/api/token", { method: "POST" });
@@ -151,6 +157,27 @@ export default function Home() {
                   </button>
                 ))}
               </motion.div>
+
+              <motion.div
+                className="engine-toggle"
+                variants={fadeUp}
+                initial="hidden"
+                animate="show"
+                custom={5}
+              >
+                <button
+                  className={`engine-pill ${engine === "happy-oyster" ? "active" : ""}`}
+                  onClick={() => setEngine("happy-oyster")}
+                >
+                  ✨ Oyster <span>quality · $0.83/min</span>
+                </button>
+                <button
+                  className={`engine-pill ${engine === "lingbot" ? "active" : ""}`}
+                  onClick={() => setEngine("lingbot")}
+                >
+                  ⚡ LingBot <span>eco · $0.20/min · event keys</span>
+                </button>
+              </motion.div>
             </div>
 
             <motion.div
@@ -212,15 +239,34 @@ export default function Home() {
                 <ol className="mission-list">
                   {stage.plan.missions.map((m, i) => (
                     <li key={i}>
-                      <strong>{m.title}</strong>
+                      <strong>
+                        {m.event_key && <kbd className="mission-key">{m.event_key}</kbd>} {m.title}
+                      </strong>
                       <p>{m.description}</p>
                     </li>
                   ))}
                 </ol>
               </div>
               <div className="panel">
-                <h3>The world we built for you</h3>
-                <p className="world-prompt">{stage.plan.world_prompt}</p>
+                {isLingbotPlan(stage.plan) ? (
+                  <>
+                    <h3>Event keys inside the world</h3>
+                    <div className="event-keys briefing">
+                      {stage.plan.scene.events.map((ev) => (
+                        <div key={ev.key} className="event-chip static">
+                          <kbd>{ev.key}</kbd> {ev.name}
+                        </div>
+                      ))}
+                    </div>
+                    <h3 style={{ marginTop: 22 }}>The world we built for you</h3>
+                    <p className="world-prompt">{stage.plan.idle_prompt}</p>
+                  </>
+                ) : (
+                  <>
+                    <h3>The world we built for you</h3>
+                    <p className="world-prompt">{stage.plan.world_prompt}</p>
+                  </>
+                )}
               </div>
             </div>
 
@@ -236,14 +282,21 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {stage.name === "world" && (
-        <WorldExperience
-          jwt={stage.jwt}
-          plan={stage.plan}
-          worldId={stage.worldId}
-          onExit={() => setStage({ name: "home" })}
-        />
-      )}
+      {stage.name === "world" &&
+        (isLingbotPlan(stage.plan) ? (
+          <LingbotExperience
+            jwt={stage.jwt}
+            plan={stage.plan}
+            onExit={() => setStage({ name: "home" })}
+          />
+        ) : (
+          <WorldExperience
+            jwt={stage.jwt}
+            plan={stage.plan}
+            worldId={stage.worldId}
+            onExit={() => setStage({ name: "home" })}
+          />
+        ))}
 
       {stage.name === "home" && (
         <>
@@ -303,10 +356,18 @@ export default function Home() {
               <div className="library-grid">
                 {worlds.map((w) => (
                   <div key={w.id} className="world-card">
-                    <div className="world-card-title">{w.plan.title}</div>
+                    <div className="world-card-title">
+                      {w.plan.title}{" "}
+                      <span className="engine-badge">{w.engine === "lingbot" ? "⚡ ECO" : "✨ HQ"}</span>
+                    </div>
                     <div className="world-card-topic">{w.plan.topic}</div>
                     <div className="world-card-actions">
-                      <button className="btn primary small" onClick={() => enterWorld(w.plan, w.id)}>
+                      <button
+                        className="btn primary small"
+                        onClick={() =>
+                          enterWorld(w.plan, w.engine === "lingbot" ? undefined : w.id)
+                        }
+                      >
                         Re-enter
                       </button>
                       <button

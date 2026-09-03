@@ -4,10 +4,11 @@ import { NextResponse } from "next/server";
 // The API key never reaches the browser.
 const REACTOR_TOKENS_URL = "https://api.reactor.inc/tokens";
 
-// HappyOyster slugs (adventure + directing) so one token works for both.
-const HAPPY_OYSTER_MODELS = [
+// Every model the app can connect to — token works for all of them.
+const ALLOWED_MODELS = [
   "reactor/happy-oyster-adventure",
   "reactor/happy-oyster-director",
+  "reactor/lingbot-world-2",
 ];
 
 export async function POST() {
@@ -31,7 +32,7 @@ export async function POST() {
       authorization_details: [
         {
           type: "session",
-          resources: { models: { match: HAPPY_OYSTER_MODELS } },
+          resources: { models: { match: ALLOWED_MODELS } },
         },
       ],
     }),

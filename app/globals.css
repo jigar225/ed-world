@@ -1214,6 +1214,131 @@ body::after {
   font-size: 14px;
 }
 
+/* ── Engine toggle ───────────────────────── */
+.engine-toggle {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 34px;
+}
+
+.engine-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 12px 22px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.engine-pill span {
+  font-family: var(--font-body);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.engine-pill:hover {
+  border-color: var(--border-bright);
+}
+
+.engine-pill.active {
+  border-color: var(--accent);
+  background: rgba(108, 255, 194, 0.07);
+  box-shadow: 0 0 24px rgba(108, 255, 194, 0.12);
+}
+
+.engine-pill.active span {
+  color: var(--accent);
+}
+
+.engine-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--accent);
+  background: rgba(108, 255, 194, 0.08);
+  border: 1px solid rgba(108, 255, 194, 0.25);
+  border-radius: 6px;
+  padding: 2px 7px;
+  vertical-align: middle;
+}
+
+/* ── Event keys (LingBot hold-to-trigger) ── */
+.event-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.event-keys.briefing {
+  margin-bottom: 6px;
+}
+
+.event-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 11px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+  user-select: none;
+}
+
+.event-chip kbd {
+  background: rgba(108, 255, 194, 0.12);
+  border: 1px solid rgba(108, 255, 194, 0.3);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  padding: 1px 7px;
+  font-size: 11px;
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+
+.event-chip:hover {
+  border-color: var(--border-bright);
+}
+
+.event-chip.active {
+  border-color: var(--accent);
+  background: rgba(108, 255, 194, 0.14);
+  box-shadow: 0 0 20px rgba(108, 255, 194, 0.25);
+  transform: scale(1.05);
+}
+
+.event-chip.static {
+  cursor: default;
+}
+
+.mission-key {
+  background: rgba(108, 255, 194, 0.12);
+  border: 1px solid rgba(108, 255, 194, 0.3);
+  border-radius: 5px;
+  padding: 0 6px;
+  font-size: 11px;
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-weight: 700;
+  margin-right: 4px;
+}
+
 /* ── Footer ──────────────────────────────── */
 .footer {
   display: flex;

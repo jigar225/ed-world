@@ -4,6 +4,7 @@
 // (this is our big cost saver: no regeneration per student).
 
 import type { LingbotScene } from "@/lib/lingbot";
+import type { CWMission, CWSpec } from "@/lib/codeworld";
 
 export interface Mission {
   title: string;
@@ -33,15 +34,28 @@ export interface LingbotLessonPlan {
   missions: Mission[];
 }
 
-export type AnyPlan = LessonPlan | LingbotLessonPlan;
+export interface CodeworldPlan {
+  topic: string;
+  engine: "codeworld";
+  title: string;
+  summary: string;
+  spec: CWSpec;
+  missions: CWMission[];
+}
+
+export type AnyPlan = LessonPlan | LingbotLessonPlan | CodeworldPlan;
 
 export function isLingbotPlan(plan: AnyPlan): plan is LingbotLessonPlan {
   return (plan as LingbotLessonPlan).engine === "lingbot";
 }
 
+export function isCodeworldPlan(plan: AnyPlan): plan is CodeworldPlan {
+  return (plan as CodeworldPlan).engine === "codeworld";
+}
+
 export interface SavedWorld {
-  id: string; // encrypted_world_id (happy-oyster) or lingbot scene key
-  engine?: "happy-oyster" | "lingbot";
+  id: string; // encrypted_world_id (happy-oyster) or scene/spec key
+  engine?: "happy-oyster" | "lingbot" | "codeworld";
   plan: AnyPlan;
   createdAt: number;
 }

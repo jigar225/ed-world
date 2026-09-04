@@ -1339,6 +1339,21 @@ body::after {
   margin-right: 4px;
 }
 
+/* ── CodeWorld labels ────────────────────── */
+.cw-label {
+  background: rgba(4, 4, 8, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 3px 10px;
+  color: #e8ecff;
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  backdrop-filter: blur(6px);
+}
+
 /* ── Footer ──────────────────────────────── */
 .footer {
   display: flex;

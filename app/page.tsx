@@ -5,11 +5,13 @@ import { AnimatePresence, motion } from "framer-motion";
 import dynamic from "next/dynamic";
 import WorldExperience from "@/components/WorldExperience";
 import LingbotExperience from "@/components/LingbotExperience";
+import CodeWorldExperience from "@/components/CodeWorldExperience";
 import LoadingUniverse from "@/components/LoadingUniverse";
 import {
   AnyPlan,
   LessonPlan,
   SavedWorld,
+  isCodeworldPlan,
   isLingbotPlan,
   listWorlds,
   removeWorld,
@@ -17,7 +19,7 @@ import {
 
 const Scene = dynamic(() => import("@/components/Scene"), { ssr: false });
 
-type Engine = "happy-oyster" | "lingbot";
+type Engine = "happy-oyster" | "lingbot" | "codeworld";
 
 type Stage =
   | { name: "home" }
@@ -44,7 +46,7 @@ const fadeUp = {
 export default function Home() {
   const [stage, setStage] = useState<Stage>({ name: "home" });
   const [topic, setTopic] = useState("");
-  const [engine, setEngine] = useState<Engine>("happy-oyster");
+  const [engine, setEngine] = useState<Engine>("codeworld");
   const [error, setError] = useState<string | null>(null);
   const [worlds, setWorlds] = useState<SavedWorld[]>([]);
 
@@ -56,7 +58,7 @@ export default function Home() {
     setError(null);
     setStage({ name: "planning" });
     try {
-      const r = await fetch("/api/plan", {
+      const r = await fetch(chosenEngine === "codeworld" ? "/api/world" : "/api/plan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ topic: chosenTopic, engine: chosenEngine }),
@@ -72,6 +74,11 @@ export default function Home() {
 
   async function enterWorld(plan: AnyPlan, worldId?: string) {
     setError(null);
+    // CodeWorld runs fully client-side — no session token needed, ever.
+    if (isCodeworldPlan(plan)) {
+      setStage({ name: "world", plan, jwt: "" });
+      return;
+    }
     try {
       const r = await fetch("/api/token", { method: "POST" });
       const data = await r.json();
@@ -166,6 +173,12 @@ export default function Home() {
                 custom={5}
               >
                 <button
+                  className={`engine-pill ${engine === "codeworld" ? "active" : ""}`}
+                  onClick={() => setEngine("codeworld")}
+                >
+                  ⚗️ Lab <span>free forever · real physics</span>
+                </button>
+                <button
                   className={`engine-pill ${engine === "happy-oyster" ? "active" : ""}`}
                   onClick={() => setEngine("happy-oyster")}
                 >
@@ -175,7 +188,7 @@ export default function Home() {
                   className={`engine-pill ${engine === "lingbot" ? "active" : ""}`}
                   onClick={() => setEngine("lingbot")}
                 >
-                  ⚡ LingBot <span>eco · $0.20/min · event keys</span>
+                  ⚡ LingBot <span>eco · $0.20/min</span>
                 </button>
               </motion.div>
             </div>
@@ -261,6 +274,24 @@ export default function Home() {
                     <h3 style={{ marginTop: 22 }}>The world we built for you</h3>
                     <p className="world-prompt">{stage.plan.idle_prompt}</p>
                   </>
+                ) : isCodeworldPlan(stage.plan) ? (
+                  <>
+                    <h3>Event keys inside the world</h3>
+                    <div className="event-keys briefing">
+                      {stage.plan.spec.events.map((ev) => (
+                        <div key={ev.key} className="event-chip static">
+                          <kbd>{ev.key}</kbd> {ev.name}
+                        </div>
+                      ))}
+                    </div>
+                    <h3 style={{ marginTop: 22 }}>World spec — compiled by agents</h3>
+                    <p className="world-prompt">
+                      {stage.plan.spec.objects.length} objects · sky: {stage.plan.spec.sky} ·
+                      ground: {stage.plan.spec.ground} · gravity: {stage.plan.spec.gravity} m/s²
+                      {"\n\n"}Deterministic physics — the hammer and feather fall at exactly the
+                      same rate, every time. Zero credits. Infinite playtime.
+                    </p>
+                  </>
                 ) : (
                   <>
                     <h3>The world we built for you</h3>
@@ -283,7 +314,9 @@ export default function Home() {
       </AnimatePresence>
 
       {stage.name === "world" &&
-        (isLingbotPlan(stage.plan) ? (
+        (isCodeworldPlan(stage.plan) ? (
+          <CodeWorldExperience plan={stage.plan} onExit={() => setStage({ name: "home" })} />
+        ) : isLingbotPlan(stage.plan) ? (
           <LingbotExperience
             jwt={stage.jwt}
             plan={stage.plan}
@@ -358,14 +391,16 @@ export default function Home() {
                   <div key={w.id} className="world-card">
                     <div className="world-card-title">
                       {w.plan.title}{" "}
-                      <span className="engine-badge">{w.engine === "lingbot" ? "⚡ ECO" : "✨ HQ"}</span>
+                      <span className="engine-badge">
+                        {w.engine === "lingbot" ? "⚡ ECO" : w.engine === "codeworld" ? "⚗️ FREE" : "✨ HQ"}
+                      </span>
                     </div>
                     <div className="world-card-topic">{w.plan.topic}</div>
                     <div className="world-card-actions">
                       <button
                         className="btn primary small"
                         onClick={() =>
-                          enterWorld(w.plan, w.engine === "lingbot" ? undefined : w.id)
+                          enterWorld(w.plan, w.engine === "happy-oyster" ? w.id : undefined)
                         }
                       >
                         Re-enter

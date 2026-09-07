@@ -5,6 +5,10 @@
 
 export type CWSky = "space" | "day" | "sunset" | "night" | "nebula" | "underwater" | "cell";
 export type CWGround = "moon" | "grass" | "sand" | "water" | "grid" | "none";
+// Placement semantics (RealWorld engine): "ground" = the runtime ground-snaps
+// the object onto the terrain (bbox bottom touches soil, y is IGNORED);
+// "air" = y means height above ground (hovers, or starts in the air for drops).
+export type CWCategory = "ground" | "air";
 export type CWShape =
   | "box"
   | "sphere"
@@ -24,6 +28,8 @@ export interface CWObject {
   float?: { amp: number; speed: number };
   spin?: number;
   falls?: boolean;
+  category?: CWCategory; // placement: ground-snap vs height-above-ground
+  model?: string; // compiled foundry GLB (P2) — runtime upgrades primitive → real asset
 }
 
 export type CWEventAction = "drop" | "launch" | "pulse" | "orbit" | "toggle";
@@ -103,6 +109,14 @@ export function validateSpec(raw: unknown): CWSpec {
           : undefined,
       spin: typeof obj.spin === "number" ? obj.spin : undefined,
       falls: obj.falls === true,
+      category:
+        obj.category === "air" || obj.category === "ground"
+          ? obj.category
+          : undefined,
+      model:
+        typeof obj.model === "string" && /^(\/props\/[\w.-]+\.glb|https:\/\/\S+)$/.test(obj.model)
+          ? obj.model
+          : undefined,
     };
   });
 

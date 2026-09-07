@@ -1,0 +1,13 @@
+{
+  "source": "NASA LRO LROC NAC DTM — Apollo 15 landing site (NAC_DTM_APOLLO15), PDS LROLRC_2001",
+  "credit": "NASA/GSFC/ASU — Henriksen et al. 2016, doi:10.1016/j.icarus.2016.05.012",
+  "centerLat": 26.1322,
+  "centerLon": 3.6339,
+  "width": 1024,
+  "height": 1024,
+  "meters": 2048,
+  "metersPerPixel": 2,
+  "minHeight": -30.27,
+  "maxHeight": 27.11,
+  "note": "Uint16 LE row-major (north-up); world height = minHeight + v/65535*(maxHeight-minHeight). Centered on world origin."
+}

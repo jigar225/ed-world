@@ -1376,3 +1376,91 @@ body::after {
     text-align: center;
   }
 }
+
+/* ── RealWorld (P1 Moon Runtime 2.0) ───────────────── */
+.rw-canvas {
+  position: absolute;
+  inset: 0;
+}
+.rw-canvas canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.rw-crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.85);
+  box-shadow: 0 0 8px rgba(108, 255, 194, 0.7);
+  z-index: 12;
+  pointer-events: none;
+}
+
+.rw-lock {
+  position: absolute;
+  inset: 0;
+  z-index: 18;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(3, 3, 5, 0.55);
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  padding: 24px;
+}
+
+.rw-lock-card {
+  text-align: center;
+  background: rgba(10, 10, 14, 0.72);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 34px 44px;
+  max-width: 460px;
+  pointer-events: none;
+}
+
+.rw-lock-card h3 {
+  font-family: var(--font-display);
+  font-size: 26px;
+  letter-spacing: -0.02em;
+  margin-bottom: 10px;
+}
+
+.rw-lock-card p {
+  color: var(--muted);
+  font-size: 14.5px;
+  margin-bottom: 14px;
+}
+
+.rw-lock-card small {
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 2;
+}
+
+.rw-lock-card .btn {
+  pointer-events: auto;
+  margin-top: 8px;
+}
+
+.rw-spinner {
+  width: 34px;
+  height: 34px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  animation: rw-spin 0.9s linear infinite;
+}
+
+@keyframes rw-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

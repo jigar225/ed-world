@@ -13,13 +13,18 @@ import {
   SavedWorld,
   isCodeworldPlan,
   isLingbotPlan,
+  isRealworldPlan,
   listWorlds,
   removeWorld,
 } from "@/lib/worlds";
 
 const Scene = dynamic(() => import("@/components/Scene"), { ssr: false });
+// three/webgpu must never touch the server — client-only like the hero Scene.
+const RealWorldExperience = dynamic(() => import("@/components/RealWorldExperience"), {
+  ssr: false,
+});
 
-type Engine = "happy-oyster" | "lingbot" | "codeworld";
+type Engine = "happy-oyster" | "lingbot" | "codeworld" | "realworld";
 
 type Stage =
   | { name: "home" }
@@ -58,7 +63,9 @@ export default function Home() {
     setError(null);
     setStage({ name: "planning" });
     try {
-      const r = await fetch(chosenEngine === "codeworld" ? "/api/world" : "/api/plan", {
+      const r = await fetch(
+        chosenEngine === "codeworld" || chosenEngine === "realworld" ? "/api/world" : "/api/plan",
+        {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ topic: chosenTopic, engine: chosenEngine }),
@@ -74,8 +81,8 @@ export default function Home() {
 
   async function enterWorld(plan: AnyPlan, worldId?: string) {
     setError(null);
-    // CodeWorld runs fully client-side — no session token needed, ever.
-    if (isCodeworldPlan(plan)) {
+    // CodeWorld + RealWorld run fully client-side — no session token needed, ever.
+    if (isCodeworldPlan(plan) || isRealworldPlan(plan)) {
       setStage({ name: "world", plan, jwt: "" });
       return;
     }
@@ -179,6 +186,12 @@ export default function Home() {
                   ⚗️ Lab <span>free forever · real physics</span>
                 </button>
                 <button
+                  className={`engine-pill ${engine === "realworld" ? "active" : ""}`}
+                  onClick={() => setEngine("realworld")}
+                >
+                  🌕 Moon 2.0 <span>photoreal · free forever</span>
+                </button>
+                <button
                   className={`engine-pill ${engine === "happy-oyster" ? "active" : ""}`}
                   onClick={() => setEngine("happy-oyster")}
                 >
@@ -274,7 +287,7 @@ export default function Home() {
                     <h3 style={{ marginTop: 22 }}>The world we built for you</h3>
                     <p className="world-prompt">{stage.plan.idle_prompt}</p>
                   </>
-                ) : isCodeworldPlan(stage.plan) ? (
+                ) : isCodeworldPlan(stage.plan) || isRealworldPlan(stage.plan) ? (
                   <>
                     <h3>Event keys inside the world</h3>
                     <div className="event-keys briefing">
@@ -290,6 +303,8 @@ export default function Home() {
                       ground: {stage.plan.spec.ground} · gravity: {stage.plan.spec.gravity} m/s²
                       {"\n\n"}Deterministic physics — the hammer and feather fall at exactly the
                       same rate, every time. Zero credits. Infinite playtime.
+                      {isRealworldPlan(stage.plan) &&
+                        "\n\n🌕 Rendered by Runtime 2.0 — photoreal WebGPU, FPS walk, real lunar terrain."}
                     </p>
                   </>
                 ) : (
@@ -313,23 +328,26 @@ export default function Home() {
         )}
       </AnimatePresence>
 
-      {stage.name === "world" &&
-        (isCodeworldPlan(stage.plan) ? (
-          <CodeWorldExperience plan={stage.plan} onExit={() => setStage({ name: "home" })} />
-        ) : isLingbotPlan(stage.plan) ? (
-          <LingbotExperience
-            jwt={stage.jwt}
-            plan={stage.plan}
-            onExit={() => setStage({ name: "home" })}
-          />
-        ) : (
+      {stage.name === "world" && (() => {
+        const exit = () => setStage({ name: "home" });
+        if (isRealworldPlan(stage.plan)) {
+          return <RealWorldExperience plan={stage.plan} onExit={exit} />;
+        }
+        if (isCodeworldPlan(stage.plan)) {
+          return <CodeWorldExperience plan={stage.plan} onExit={exit} />;
+        }
+        if (isLingbotPlan(stage.plan)) {
+          return <LingbotExperience jwt={stage.jwt} plan={stage.plan} onExit={exit} />;
+        }
+        return (
           <WorldExperience
             jwt={stage.jwt}
             plan={stage.plan}
             worldId={stage.worldId}
-            onExit={() => setStage({ name: "home" })}
+            onExit={exit}
           />
-        ))}
+        );
+      })()}
 
       {stage.name === "home" && (
         <>
@@ -392,7 +410,13 @@ export default function Home() {
                     <div className="world-card-title">
                       {w.plan.title}{" "}
                       <span className="engine-badge">
-                        {w.engine === "lingbot" ? "⚡ ECO" : w.engine === "codeworld" ? "⚗️ FREE" : "✨ HQ"}
+                        {w.engine === "lingbot"
+                          ? "⚡ ECO"
+                          : w.engine === "codeworld"
+                            ? "⚗️ FREE"
+                            : w.engine === "realworld"
+                              ? "🌕 RT2.0"
+                              : "✨ HQ"}
                       </span>
                     </div>
                     <div className="world-card-topic">{w.plan.topic}</div>

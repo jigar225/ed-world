@@ -3,3 +3,10 @@ node_modules
 .env
 *.log
 .DS_Store
+.venv-foundry/
+
+# build/tooling artifacts — never commit
+__pycache__/
+*.pyc
+tsconfig.tsbuildinfo
+smoke_T.glb

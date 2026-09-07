@@ -43,7 +43,18 @@ export interface CodeworldPlan {
   missions: CWMission[];
 }
 
-export type AnyPlan = LessonPlan | LingbotLessonPlan | CodeworldPlan;
+// RealWorld (P1 "Moon Runtime 2.0") — same spec-as-data as CodeWorld,
+// rendered by the photoreal WebGPU runtime instead of the Lab look.
+export interface RealworldPlan {
+  topic: string;
+  engine: "realworld";
+  title: string;
+  summary: string;
+  spec: CWSpec;
+  missions: CWMission[];
+}
+
+export type AnyPlan = LessonPlan | LingbotLessonPlan | CodeworldPlan | RealworldPlan;
 
 export function isLingbotPlan(plan: AnyPlan): plan is LingbotLessonPlan {
   return (plan as LingbotLessonPlan).engine === "lingbot";
@@ -53,9 +64,13 @@ export function isCodeworldPlan(plan: AnyPlan): plan is CodeworldPlan {
   return (plan as CodeworldPlan).engine === "codeworld";
 }
 
+export function isRealworldPlan(plan: AnyPlan): plan is RealworldPlan {
+  return (plan as RealworldPlan).engine === "realworld";
+}
+
 export interface SavedWorld {
   id: string; // encrypted_world_id (happy-oyster) or scene/spec key
-  engine?: "happy-oyster" | "lingbot" | "codeworld";
+  engine?: "happy-oyster" | "lingbot" | "codeworld" | "realworld";
   plan: AnyPlan;
   createdAt: number;
 }

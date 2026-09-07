@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
 import { validateSpec } from "@/lib/codeworld";
+import { forgeProp, foundryConfigured, listCachedProps, peekCachedProp, slugify } from "@/lib/foundry";
+
+export const maxDuration = 900; // realworld: Kimi ~90s + serial forges through a
+                                // possibly-cold Modal service. NOTE: prop cap is OFF
+                                // — Vercel deploys must set FOUNDRY_MAX_PROPS (900s
+                                // fits ~3 forges) or raise this. Local dev ignores it.
 
 // CodeWorld engine: TWO agents in one route.
 //   1. ARCHITECT (Kimi) — authors a world spec for the topic.
@@ -50,6 +56,18 @@ RULES:
 6. missions: 4-6, ordered simple to deep, each tied to an event_key or a labeled landmark.
 7. Use float (bobbing) and spin for ambient life. emissive for things that glow (stars, cores, reactors, enzymes).`;
 
+// REALWORLD engine addendum (photoreal lunar runtime) — overrides the generic
+// composition rules above. The runtime already owns the sky and the terrain;
+// the LLM plans WALKABLE SURFACE CONTENT in 2D and the runtime owns heights.
+const REALWORLD_RULES = `
+REALWORLD MODE (photoreal Moon surface runtime) — these rules OVERRIDE rules 2 and 3 above:
+R1. THE SKY ALREADY EXISTS. The runtime renders black space, stars, the Sun and planet Earth at their real positions, plus real lunar terrain. NEVER create the Earth, the Moon, the Sun, stars, "space", a sky dome, a ground plane, or any celestial object. Objects are ONLY things a mission crew could place ON the surface: landers, rovers, flags, antennas, experiment rigs, sample containers, habitats, telescopes, signs, crates.
+R2. Every object MUST have "category": "ground" (it stands on the surface — the runtime snaps it onto the terrain, your y value is IGNORED) or "air" (it hovers or starts in the air — y = height above ground in meters; ONLY for drones, balloons, or "falls": true drop-experiment objects).
+R3. Layout: place x,z within 5..70m of the origin. NO two objects closer than 4m to each other. The centerpiece within 15m of the origin. Spread landmarks around the center so a WALKING visitor discovers them one by one. This is a walkable place, not a floating diorama — NOTHING floats above the ground unless it is category "air".
+R4. Real-world plausible sizes: a flag ~1.5m, a rover 2-3m, a lander 4-7m, a habitat 6-10m. Nothing under 0.4m or over 40m tall.
+R5. Believable equipment colors only: white, aluminium grey, gold foil, matte black, safety orange, dusty tan. NO candy/neon colors.
+R6. 8-16 objects. Everything teaches — but it teaches by being a believable lunar surface installation, not by being a sculpture.`;
+
 export async function POST(req: Request) {
   const baseUrl = (process.env.KIMI_BASE_URL ?? "https://api.moonshot.ai/v1").replace(/\/$/, "");
   const model = process.env.KIMI_MODEL ?? "kimi-k3";
@@ -69,9 +87,11 @@ export async function POST(req: Request) {
   }
 
   let topic: string;
+  let engine: "codeworld" | "realworld" = "codeworld";
   try {
     const body = await req.json();
     topic = String(body?.topic ?? "").trim();
+    if (body?.engine === "realworld") engine = "realworld";
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
@@ -79,6 +99,25 @@ export async function POST(req: Request) {
 
   const t0 = Date.now();
   console.log(`[world] architect start — topic="${topic}"`);
+
+  // CACHE-AWARE ARCHITECT: the foundry cache key is the object "id", and
+  // Kimi invents FRESH ids every run (temp 0.7) — so repeat topics re-forge
+  // props we already have on disk (~4 GPU-min each). Hand the architect the
+  // existing prop slugs so it reuses them as ids whenever they fit.
+  // (test_* slugs are foundry machinery artifacts — reusable via cache peek,
+  // but never advertised to the architect as scene-worthy props)
+  const cachedProps =
+    engine === "realworld" && foundryConfigured()
+      ? (await listCachedProps()).filter((s) => !s.startsWith("test"))
+      : [];
+  const cacheRules =
+    cachedProps.length > 0
+      ? `\nPROP CACHE — these 3D models are ALREADY FORGED and reusable at $0 (ids): ${cachedProps
+          .slice(0, 80)
+          .join(
+            ", "
+          )}. R7. If an object you want matches one of these, set its "id" to EXACTLY that slug (label, position and scale stay yours). Invent a fresh snake_case id ONLY for objects NOT in this list — every new id triggers a real GPU forge.`
+      : "";
 
   async function callArchitect(feedback?: string): Promise<unknown> {
     const r = await fetch(`${baseUrl}/chat/completions`, {
@@ -89,7 +128,13 @@ export async function POST(req: Request) {
         temperature: 0.7,
         response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          {
+            role: "system",
+            content:
+              engine === "realworld"
+                ? SYSTEM_PROMPT + REALWORLD_RULES + cacheRules
+                : SYSTEM_PROMPT,
+          },
           {
             role: "user",
             content: feedback
@@ -121,9 +166,54 @@ export async function POST(req: Request) {
       console.log(`[world] ✓ repaired spec passed in ${Date.now() - t0}ms`);
     }
 
+    // ── P2 DIRECTOR → FOUNDRY: compile real GLB props for hero objects ──
+    // RealWorld plans only. ALL labeled objects are forged, biggest first
+    // (no cap — owner call 2026-09-05: forge whatever the world wants).
+    // FOUNDRY_MAX_PROPS, if explicitly set, still caps it (0 disables).
+    // Compile-once: GLBs land in public/props/ and are served from cache
+    // forever after. Failures leave the object as a primitive — the runtime
+    // never breaks over a prop.
+    if (engine === "realworld" && foundryConfigured()) {
+      const maxPropsEnv = process.env.FOUNDRY_MAX_PROPS;
+      const maxProps =
+        maxPropsEnv === undefined ? Infinity : Math.max(0, Number(maxPropsEnv));
+      const heroes = [...spec.objects]
+        .filter((o) => o.label)
+        .sort(
+          (a, b) =>
+            Math.max(...(b.scale ?? [1, 1, 1])) - Math.max(...(a.scale ?? [1, 1, 1]))
+        )
+        .slice(0, maxProps);
+      if (heroes.length > 0) {
+        console.log(`[world] foundry compile — heroes: ${heroes.map((o) => o.id).join(", ")}`);
+        // SERIAL, not parallel: free ref-image providers (Pollinations) 429 on
+        // simultaneous calls, and parallel Modal cold-starts waste spend.
+        for (const o of heroes) {
+          try {
+            // Cache-first: Kimi invents fresh ids per run, so check BOTH the
+            // id and the slugified label against public/props before paying
+            // for a forge. The label is the stable key for repeat topics
+            // (id "apollo_hammer", label "Hammer" → reuses hammer.glb).
+            const labelSlug = o.label ? slugify(o.label) : "";
+            const r =
+              (await peekCachedProp([o.id, labelSlug])) ??
+              (await forgeProp(`${o.label}, high quality detailed 3D model`, o.id));
+            o.model = r.url;
+            console.log(
+              `[world] ✓ forged "${o.id}" → ${r.slug} (${Math.round(r.bytes / 1024)}KB, ${
+                r.cached ? "cached" : `${r.ms}ms`
+              })`
+            );
+          } catch (e) {
+            console.warn(`[world] ✗ forge failed for "${o.id}" (stays primitive):`, e);
+          }
+        }
+      }
+    }
+
     return NextResponse.json({
       topic,
-      engine: "codeworld",
+      engine,
       title: spec.title,
       summary: spec.summary,
       spec,

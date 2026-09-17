@@ -14,9 +14,9 @@ import path from "path";
 // Providers (FOUNDRY_PROVIDER):
 //   "modal" — SELF-HOSTED TRELLIS.2-4B on our Modal L4 (default when
 //             TRELLIS_MODAL_URL is set; FAL_KEY is empty so this is the
-//             primary). Ref image chain: FAL → Gemini → Pollinations.
+//             primary). References also use Modal FLUX; no external fallback.
 //   "fal"   — legacy hosted path (FLUX ref + fal-ai/trellis). Kept as
-//             fallback if FAL_KEY ever returns.
+//             explicit legacy provider only; never a fallback from Modal.
 // ─────────────────────────────────────────────────────────────────────────
 
 const PROPS_DIR = path.join(process.cwd(), "public", "props");
@@ -45,8 +45,8 @@ export function foundryConfigured(): boolean {
     process.env.FOUNDRY_PROVIDER ?? (process.env.TRELLIS_MODAL_URL ? "modal" : "fal")
   ).toLowerCase();
   if (provider === "modal")
-    return Boolean(process.env.TRELLIS_MODAL_URL && process.env.FOUNDRY_SHARED_SECRET);
-  return Boolean(process.env.FAL_KEY);
+    return Boolean(process.env.TRELLIS_MODAL_URL && process.env.FLUX_MODAL_URL && process.env.FOUNDRY_SHARED_SECRET);
+  return provider === "fal" && Boolean(process.env.FAL_KEY);
 }
 
 // Reference image: a SINGLE object, isolated — TRELLIS hates scenes/clutter.
@@ -106,70 +106,27 @@ async function falTrellis(imageUrl: string, key: string): Promise<ArrayBuffer> {
 const REF_PROMPT = (prompt: string) =>
   `A single ${prompt}, centered, fully visible, isolated on a plain pure white background, studio product photograph, soft even lighting, no background shadows, no text, no watermark, square format`;
 
-async function geminiRefImage(prompt: string, key: string): Promise<Buffer> {
-  const model = process.env.GEMINI_IMAGE_MODEL ?? "gemini-2.5-flash-image";
-  const r = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: REF_PROMPT(prompt) }] }],
-      }),
-      signal: AbortSignal.timeout(120_000),
-    }
-  );
-  if (!r.ok) throw new Error(`Gemini ref image failed (${r.status}): ${await r.text()}`);
-  const data = await r.json();
-  const parts: Array<{ inlineData?: { data: string } }> =
-    data?.candidates?.[0]?.content?.parts ?? [];
-  const b64 = parts.find((p) => p.inlineData?.data)?.inlineData?.data;
-  if (!b64) throw new Error("Gemini returned no image");
-  return Buffer.from(b64, "base64");
+// Phase C: OUR OWN FLUX.2-klein-4B on Modal (modal/flux_ref_app.py) —
+// Apache 2.0, ~1-3s per 1024² image, no 429s, parallel-safe. This is the
+// Only reference-image provider on the Modal foundry path.
+async function modalFluxRefImage(prompt: string): Promise<Buffer> {
+  const url = process.env.FLUX_MODAL_URL;
+  const key = process.env.FOUNDRY_SHARED_SECRET;
+  if (!url) throw new Error("FLUX_MODAL_URL not set — deploy modal/flux_ref_app.py first");
+  if (!key) throw new Error("FOUNDRY_SHARED_SECRET not set — foundry endpoint auth missing");
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Foundry-Key": key },
+    body: JSON.stringify({ prompt: REF_PROMPT(prompt) }),
+    signal: AbortSignal.timeout(300_000), // cold-start tolerant (boot+load ~1-2 min)
+  });
+  if (!r.ok) throw new Error(`modal flux failed (${r.status}): ${await r.text()}`);
+  return Buffer.from(await r.arrayBuffer()); // raw PNG bytes
 }
 
-async function pollinationsRefImage(prompt: string): Promise<Buffer> {
-  const seed = Math.floor(Math.random() * 1_000_000);
-  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(
-    REF_PROMPT(prompt).slice(0, 600)
-  )}?width=1024&height=1024&nologo=true&seed=${seed}&model=flux&enhance=true`;
-  const r = await fetch(url, { signal: AbortSignal.timeout(90_000) });
-  if (!r.ok) throw new Error(`Pollinations ref image failed (${r.status})`);
-  return Buffer.from(await r.arrayBuffer());
-}
-
-// Reference image for the Modal path: FAL → Gemini → Pollinations (first
-// configured wins). Returns raw image bytes for the TRELLIS POST.
+// Modal-only reference generation: a failure must not disclose prompts to another provider.
 async function refImage(prompt: string): Promise<Buffer> {
-  const falKey = process.env.FAL_KEY;
-  const geminiKey = process.env.GEMINI_API_KEY;
-  const providers: Array<{ name: string; run: () => Promise<Buffer> }> = [];
-  if (falKey)
-    providers.push({
-      name: "fal",
-      run: async () => {
-        const url = await falImage(prompt, falKey);
-        const img = await fetch(url, { signal: AbortSignal.timeout(30_000) });
-        if (!img.ok) throw new Error(`fal image download failed (${img.status})`);
-        return Buffer.from(await img.arrayBuffer());
-      },
-    });
-  if (geminiKey)
-    providers.push({ name: "gemini", run: () => geminiRefImage(prompt, geminiKey) });
-  providers.push({ name: "pollinations", run: () => pollinationsRefImage(prompt) });
-
-  let lastError: unknown = null;
-  for (const p of providers) {
-    try {
-      const buf = await p.run();
-      console.log(`[foundry] ref image ✓ ${p.name} (${Math.round(buf.length / 1024)}KB)`);
-      return buf;
-    } catch (e) {
-      console.warn(`[foundry] ref image ✗ ${p.name}:`, e);
-      lastError = e;
-    }
-  }
-  throw new Error(`All ref-image providers failed: ${String(lastError)}`);
+  return modalFluxRefImage(prompt);
 }
 
 // TRELLIS.2-4B on our own Modal L4: image bytes → GLB bytes.
@@ -180,14 +137,41 @@ async function modalTrellis(image: Buffer): Promise<ArrayBuffer> {
   const key = process.env.FOUNDRY_SHARED_SECRET;
   if (!url) throw new Error("TRELLIS_MODAL_URL not set — deploy modal/trellis2_app.py first");
   if (!key) throw new Error("FOUNDRY_SHARED_SECRET not set — foundry endpoint auth missing");
-  const r = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Foundry-Key": key },
-    body: JSON.stringify({ image_b64: image.toString("base64") }),
-    signal: AbortSignal.timeout(600_000),
-  });
-  if (!r.ok) throw new Error(`modal trellis failed (${r.status}): ${await r.text()}`);
-  return r.arrayBuffer();
+  const body = JSON.stringify({ image_b64: image.toString("base64") });
+  for (let attempt=0;attempt<2;attempt++) {
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Foundry-Key": key },
+      body,
+      signal: AbortSignal.timeout(600_000),
+    });
+    if (r.ok) return r.arrayBuffer();
+    const detail=await r.text();
+    // Observed during demo QA: Modal can lose a queued cold-start invocation.
+    // Retry that explicit failure once, retaining the already-generated image.
+    // Do not retry timeouts: those may still be expensive jobs running remotely.
+    if (attempt===0 && (r.status===503 || r.status===502 || (r.status===500 && detail.includes("lost track of input")))) {
+      console.warn(`[foundry] transient Modal ${r.status}; retrying the same reference image once`);
+      await new Promise(resolve=>setTimeout(resolve,2000));
+      continue;
+    }
+    throw new Error(`modal trellis failed (${r.status}): ${detail}`);
+  }
+  throw new Error("Modal forge retry exhausted");
+}
+
+function validateGLB(data:ArrayBuffer) {
+  if(data.byteLength<20)throw new Error("Foundry returned an empty model");
+  const header=new DataView(data);
+  if(header.getUint32(0,true)!==0x46546c67 || header.getUint32(4,true)!==2 || header.getUint32(8,true)!==data.byteLength)
+    throw new Error("Foundry returned an invalid GLB; it was not cached");
+}
+
+async function publishGLB(file:string,data:ArrayBuffer) {
+  validateGLB(data);
+  const temp=`${file}.${process.pid}.${Date.now()}.tmp`;
+  await fs.writeFile(temp,Buffer.from(data));
+  await fs.rename(temp,file);
 }
 
 /** Slugs of every compiled prop currently in the cache (no .glb extension). */
@@ -242,22 +226,18 @@ export async function forgeProp(prompt: string, slug = slugify(prompt)): Promise
   ).toLowerCase();
 
   if (provider === "modal") {
-    try {
-      const image = await refImage(prompt);
-      const glb = await modalTrellis(image);
-      await fs.writeFile(file, Buffer.from(glb));
-      return { slug, url, bytes: glb.byteLength, ms: Date.now() - t0, cached: false };
-    } catch (e) {
-      if (!process.env.FAL_KEY) throw e;
-      console.warn("[foundry] modal provider failed, falling back to FAL:", e);
-    }
+    const image = await refImage(prompt);
+    const glb = await modalTrellis(image);
+    await publishGLB(file, glb);
+    return { slug, url, bytes: glb.byteLength, ms: Date.now() - t0, cached: false };
   }
+  if (provider !== "fal") throw new Error("Unsupported foundry provider");
 
   const key = process.env.FAL_KEY;
   if (!key) throw new Error("FAL_KEY not set — foundry has no provider");
 
   const imageUrl = await falImage(prompt, key);
   const glb = await falTrellis(imageUrl, key);
-  await fs.writeFile(file, Buffer.from(glb));
+  await publishGLB(file,glb);
   return { slug, url, bytes: glb.byteLength, ms: Date.now() - t0, cached: false };
 }

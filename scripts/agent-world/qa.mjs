@@ -1,0 +1,48 @@
+import puppeteer from 'puppeteer-core';
+import assert from 'node:assert/strict';
+import {mkdir,writeFile,readFile} from 'node:fs/promises';
+const origin=process.env.AGENT_QA_ORIGIN||'http://127.0.0.1:3011',out='.cache/agent-tests/browser';
+await mkdir(out,{recursive:true});
+const fixture=JSON.parse(await readFile('.cache/agent-tests/runtime-fixture.json','utf8'));
+const browser=await puppeteer.launch({channel:'chrome',headless:true,args:['--use-angle=metal'],protocolTimeout:120000});
+const page=await browser.newPage(),errors=[],external=[];
+await page.setViewport({width:1440,height:900,deviceScaleFactor:1});
+await page.setRequestInterception(true);
+page.on('request',r=>{if(/^https?:/.test(r.url())&&!r.url().startsWith(origin+'/')){external.push(r.url());void r.abort();}else void r.continue();});
+page.on('pageerror',e=>errors.push(e.message));
+page.on('console',message=>{if(message.type()==='error')errors.push(message.text()+' '+(message.location().url??''));});
+const pause=ms=>new Promise(r=>setTimeout(r,ms));
+const click=async text=>{const handle=await page.waitForSelector(`button::-p-text(${text})`);await handle.click();};
+const snapshot=()=>page.evaluate(()=>({view:window.__ED_AGENT_VIEWER.snapshot(),behaviour:window.__ED_AGENT_VIEWER.behaviourState()}));
+const near=(a,b,tol=1e-6)=>assert(a.every((v,i)=>Math.abs(v-b[i])<tol));
+try {
+  await page.goto(origin+'/create',{waitUntil:'networkidle0',timeout:90000});
+  assert.equal(await page.$$eval('button',buttons=>buttons.some(b=>b.textContent.includes('Engineering motion fixture'))),false);
+  assert.equal(await page.$eval('button[type="submit"],form button',b=>b.disabled),true,'An empty prompt cannot submit a generation job');
+  await page.screenshot({path:out+'/product.png'});
+  await page.goto(origin+'/create?qa=1',{waitUntil:'networkidle0',timeout:90000});
+  await page.click(`[data-world-id="${fixture.id}"]`);
+  await page.waitForFunction(()=>window.__ED_AGENT_VIEWER,{timeout:90000});
+  const first=await snapshot();await pause(800);const moving=await snapshot();
+  assert(moving.behaviour.time>first.behaviour.time);assert.notDeepEqual(first.view.particles.mist,moving.view.particles.mist);assert(moving.view.waves.surface[0]>first.view.waves.surface[0]);assert(moving.view.bodies.marker.quaternion.some((v,i)=>Math.abs(v-first.view.bodies.marker.quaternion[i])>.02));
+  await click('Pause');const paused=await snapshot();await pause(300);const still=await snapshot();assert.equal(still.behaviour.time,paused.behaviour.time);near(still.view.bodies.marker.quaternion,paused.view.bodies.marker.quaternion);near(still.view.particles.mist,paused.view.particles.mist);near(still.view.waves.surface,paused.view.waves.surface);
+  await page.$eval('input[aria-label="spin"]',e=>{const setter=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set;setter.call(e,'0');e.dispatchEvent(new Event('input',{bubbles:true}));e.dispatchEvent(new Event('change',{bubbles:true}));});
+  // Use native keyboard input as the authoritative control interaction.
+  await page.focus('input[aria-label="spin"]');await page.keyboard.press('Home');await pause(250);
+  assert.equal((await snapshot()).behaviour.controls.spin,0);
+  await click('Resume');const beforeZero=await snapshot();await pause(500);near((await snapshot()).view.bodies.marker.quaternion,beforeZero.view.bodies.marker.quaternion,.02);
+  await click('Enter world');await page.waitForFunction(()=>!!document.pointerLockElement);
+  const beforeMove=await snapshot();assert.equal(beforeMove.view.paused,false,'World must be resumed before walking');await page.keyboard.down('KeyW');await page.waitForFunction(before=>Math.hypot(...window.__ED_AGENT_VIEWER.snapshot().camera.map((v,i)=>v-before[i]))>.25,{timeout:10000},beforeMove.view.camera);await page.keyboard.up('KeyW');const afterMove=await snapshot();
+  assert(Math.hypot(...afterMove.view.camera.map((v,i)=>v-beforeMove.view.camera[i]))>.2);
+  await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.pointerLockElement);
+  await click('Pause');await click('Save progress');await page.waitForFunction(()=>document.querySelector('[role="status"]')?.textContent==='Progress saved');
+  const saved=await snapshot();await click('Reset');await pause(250);await click('Restore');await pause(350);
+  const restored=await snapshot();near(saved.view.camera,restored.view.camera);near(saved.view.particles.mist,restored.view.particles.mist);assert.equal(saved.behaviour.time,restored.behaviour.time);
+  await page.screenshot({path:out+'/runtime.png'});
+  await click('Your worlds');await page.click(`[data-world-id="${fixture.id}"]`);await page.waitForFunction(()=>window.__ED_AGENT_VIEWER);await click('Pause');await click('Restore');await pause(300);
+  const reopened=await snapshot();near(saved.view.camera,reopened.view.camera);assert.equal(saved.behaviour.time,reopened.behaviour.time);
+  await writeFile(out+'/errors.json',JSON.stringify(errors));
+  assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
+  await writeFile(out+'/report.json',JSON.stringify({passed:true,checks:['normal-library-hides-fixtures','empty-prompt-disabled','moving-body','particle-flow-and-replay','wave-shader-and-pause','pause','control','first-person-travel','save-restore','reopen'],errors,external},null,2));
+  console.log('PASS: local product browser flow, movement, behaviour, pause, controls, save/restore/reopen; no external requests. Engineering fixture only.');
+} finally {await browser.close();}

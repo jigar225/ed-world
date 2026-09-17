@@ -5,7 +5,15 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "build:agent": "tsc --target es2022 --module commonjs --moduleResolution node --outDir .cache/agent-test-build --skipLibCheck --esModuleInterop --strict lib/agent-world/research.ts lib/agent-world/modal-tools.ts lib/agent-world/rpc.ts lib/agent-world/capabilities.ts lib/agent-world/jobs.ts lib/agent-world/asset-builder.ts lib/agent-world/assembly.ts lib/agent-world/pipeline.ts lib/agent-world/deployment.ts lib/agent-world/asset-agent.ts lib/agent-world/generation-services.ts lib/agent-world/scene-planner.ts",
+    "agent": "npm run build:agent && node --env-file-if-exists=.env scripts/agent-world/cli.mjs",
+    "test:agent": "npm run build:agent && node scripts/agent-world/test.mjs && node scripts/agent-world/test_scene_recipe.mjs && python3 scripts/agent-world/test_budget.py && python3 scripts/agent-world/test_language.py && python3 scripts/agent-world/test_language_reconciliation.py && tsc --target es2022 --module commonjs --moduleResolution node --outDir .cache/agent-foundry-test --skipLibCheck --esModuleInterop lib/foundry.ts && node scripts/agent-world/test_foundry_privacy.mjs && node scripts/agent-world/test_runtime.mjs && node scripts/agent-world/test_grounding.mjs && node scripts/agent-world/test_readiness.mjs && node scripts/agent-world/test_completed_world.mjs && node scripts/agent-world/test_character_motion.mjs && node scripts/agent-world/test_particle_ground.mjs && python3 scripts/agent-world/test_generation.py && node scripts/agent-world/test_asset_agent.mjs && python3 scripts/agent-world/test_terrain_data.py && .venv-foundry/bin/python scripts/agent-world/test_deployment.py",
+    "agent:worker": "npm run build:agent && node --env-file-if-exists=.env scripts/agent-world/worker.mjs",
+    "test:agent:schemas": "npm run build:agent && node scripts/agent-world/test_schemas.mjs",
+    "test:agent:browser": "node scripts/agent-world/qa.mjs",
+    "local:worlds": "npm run build:agent && node scripts/agent-world/local.mjs",
+    "typecheck": "tsc --noEmit --incremental false"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.8",
@@ -14,6 +22,7 @@
     "@reactor-models/lingbot-world-2": "^1.0.1",
     "framer-motion": "^13.2.0",
     "next": "^15.3.4",
+    "rapier": "npm:@dimforge/rapier3d-compat@0.20.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "three": "^0.185.1"
@@ -23,6 +32,10 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/three": "^0.185.4",
+    "puppeteer-core": "^25.10.0",
     "typescript": "^5"
+  },
+  "engines": {
+    "node": ">=22.16.0"
   }
 }

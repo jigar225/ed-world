@@ -1,0 +1,35 @@
+import assert from 'node:assert/strict';
+import {mkdtemp,mkdir,writeFile,unlink} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+import {createRequire} from 'node:module';
+import {completedWorld} from './completed-world.mjs';
+const require=createRequire(import.meta.url),{AgentStore}=require('../../.cache/agent-test-build/agent-world/store.js');
+const root=await mkdtemp(process.cwd()+'/.cache/agent-tests/completed-'),store=new AgentStore(':memory:');
+const job='agent-'+'a'.repeat(24),id='b'.repeat(64),prompt='Cache fixture',bytes=Buffer.from('cache integrity fixture, not a renderable world');
+const hash=createHash('sha256').update(bytes).digest('hex'),name=hash+'.glb';
+const result={job,prompt,generation:{world:{id}}};
+await mkdir(root+'/.cache/agent-world/plans',{recursive:true});await mkdir(root+'/.cache/agent-world/worlds/'+id,{recursive:true});
+await writeFile(root+'/.cache/agent-world/plans/'+job+'.json',JSON.stringify(result));
+await writeFile(root+'/.cache/agent-world/worlds/'+id+'/manifest.json',JSON.stringify({id,living:{source:'generated'},assets:{[name]:{sha256:hash,bytes:bytes.length}}}));
+await writeFile(root+'/.cache/agent-world/worlds/'+id+'/'+name,bytes);
+try{
+ assert.deepEqual(await completedWorld(root,job,prompt,store),result);
+ await unlink(root+'/.cache/agent-world/plans/'+job+'.json');
+ assert.deepEqual(await completedWorld(root,job,prompt,store),result);
+ assert.equal(await completedWorld(root,job,'another prompt',store),undefined);
+ await writeFile(root+'/.cache/agent-world/worlds/'+id+'/'+name,'tampered');
+ await assert.rejects(completedWorld(root,job,prompt,store),/integrity/);
+ await assert.rejects(completedWorld(root,'../invalid',prompt,store),/canonical/);
+ await writeFile(root+'/.cache/agent-world/worlds/'+id+'/'+name,bytes);
+ const {calibrateDecision}=require('../../.cache/agent-test-build/agent-world/grounding.js');
+ const typed={...result,plan:{assets:[{id:'snow',role:'effect',sizeMeters:[10,10,10]}],behaviours:[{id:'fall',targets:['snow'],mechanism:'particles',parameters:{velocity_z:-2}}]},generation:{...result.generation,assemblyRevision:3}};
+ store.checkpoint(job,'completed-world',{version:1,prompt},typed);
+ const grounding={decision:'accept',bindings:[{assetId:'snow',anchor:'ground',heightMeters:0,offsetMeters:[0,0]}],operators:[{id:'fall',mechanism:'particles',parameters:{velocity_z:-2,lifetime:5,count:1000,spread_x:0,spread_y:0}}]};
+ const manifest={id,living:{source:'generated'},assets:{[name]:{sha256:hash,bytes:bytes.length}},grounding};
+ await writeFile(root+'/.cache/agent-world/worlds/'+id+'/manifest.json',JSON.stringify(manifest));
+ assert.equal(await completedWorld(root,job,prompt,store),undefined,'Stale zero-height falling fields must rebuild from saved stages');
+ manifest.grounding=calibrateDecision(grounding,{plan:typed.plan});
+ await writeFile(root+'/.cache/agent-world/worlds/'+id+'/manifest.json',JSON.stringify(manifest));
+ assert.deepEqual(await completedWorld(root,job,prompt,store),typed,'Already calibrated packages retain zero-model replay');
+ console.log('PASS: exact-prompt completed package reuse, checkpoint promotion, prompt isolation, asset integrity and path guards; no model calls.');
+}finally{store.close();}

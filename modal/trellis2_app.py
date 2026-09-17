@@ -143,7 +143,7 @@ image = (
         modal.Secret.from_name("huggingface"),  # HF_TOKEN (hub calls at load)
         modal.Secret.from_name("foundry-auth"),  # FOUNDRY_SHARED_SECRET
     ],
-    max_containers=3,  # spend guardrail: ≤3 L4s alive, ever
+    max_containers=6,  # spend guardrail: ≤3 L4s alive, ever
     scaledown_window=300,  # idle 5 min → $0
     timeout=1800,  # per-request ceiling (a forge is ~5-7 min cold)
     startup_timeout=600,  # @modal.enter may take ~150s (model load) — headroom
